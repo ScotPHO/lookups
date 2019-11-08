@@ -14,6 +14,8 @@ library(tidyr) # long to wide format
 library(httr) # api connection
 library(jsonlite)  # transforming JSON files into dataframes
 
+organisation <- "HS"
+
 # Varies filepaths depending on if using server or not and what organisation uses it.
 if (exists("organisation") == TRUE) { #Health Scotland
   if (organisation == "HS") { 
@@ -161,7 +163,7 @@ create_quintile_data <- function(group_vars, geo, quint) {
   
   depr_pop_base %>% group_by_at(c("age_grp", "sex_grp", "age", "year", geo, quint)) %>% 
     summarise(denominator = sum(denominator, na.rm =T)) %>% 
-    rename_(code = geo, quintile = quint) %>% ungroup() %>% 
+    rename(code = geo, quintile = quint) %>% ungroup() %>% 
     mutate(quint_type = quint)
 }
 
@@ -184,8 +186,10 @@ rm(dz01_base) #freeing up memory
 # Datazone 2011.
 # # Resource ids can be accessed in the page for the datazone 2011 pop here:
 # https://www.opendata.nhs.scot/dataset/population-estimates
-dz11_base <- extract_open_data("c505f490-c201-44bd-abd1-1bd7a64285ee", dz2011) %>% 
-  create_agegroups()  %>% rename(denominator = pop, datazone2011 =code)
+dz11_base <- extract_open_data("c505f490-c201-44bd-abd1-1bd7a64285ee", dz2011) 
+dz11_base <- dz11_base %>%  create_agegroups()  
+dz11_base <- dz11_base %>% rename(denominator = pop, datazone2011 =code)
+## AP - split up piped commands above ^^^ as was timing out as a sinlge pipeline
 # If the previous one times out/fails try this, but the link will change every year
 # dz11_base <- read_csv("https://www.opendata.nhs.scot/dataset/7f010430-6ce1-4813-b25c-f7f335bdc4dc/resource/c505f490-c201-44bd-abd1-1bd7a64285ee/download/dz2011-pop-est_30082019.csv") %>% 
 #   filter(year > 2001 & substr(dz2011, 1, 3) != "S92") %>% #years and no Scotland
@@ -256,10 +260,30 @@ all_pop11 <- rbind(iz11_pop, ca_pop, adp_pop, hb_pop, hscp_pop, scot_pop, local_
 
 saveRDS(all_pop11, file=paste0(pop_lookup, "basefile_DZ11.rds"))
 
+# remove unneccasry objects
+rm(adp_pop,
+   iz01_pop,
+   iz11_pop,
+   ca_pop,
+   all_pop01,
+   all_pop11,
+   hb_pop,
+   hscp_pop,
+   loc_lookup,
+   local_pop,
+   scot_pop,
+   create_agegroups,
+   extract_open_data
+)
+
 ###############################################.
 ## Part 3 - Population by deprivation quintile basefile ----
 ###############################################.
 #This is better to be run in R server.
+depr_lookup <- readRDS(paste0(geo_lookup, 'deprivation_geography.rds')) %>% 
+  mutate(scotland="S00000001")%>% 
+  filter(year>2001) # AP - keep only years included in profiles
+
 dz01_base <- readRDS(paste0(pop_lookup, "DZ01_pop_basefile.rds")) %>% 
   filter(year<2014) %>% # 2014 uses simd2016 based on dz2011
   rename(datazone = datazone2001)
@@ -268,24 +292,25 @@ dz11_base <- readRDS(paste0(pop_lookup, "DZ11_pop_basefile.rds")) %>%
   subset(year>2013) %>% # 2014 onwards uses simd based on dz2011
   rename(datazone = datazone2011)
 
+dz01_base <- left_join(dz01_base, depr_lookup, by = c("datazone", "year"))
+dz11_base <- left_join(dz11_base, depr_lookup, by = c("datazone", "year"))
+
 depr_pop_base <- rbind(dz01_base, dz11_base)
-rm(dz01_base, dz11_base)
+rm(dz01_base, dz11_base, depr_lookup)
 
-depr_lookup <- readRDS(paste0(geo_lookup, 'deprivation_geography.rds')) %>% 
-  mutate(scotland="S00000001")
 
-depr_pop_base <- left_join(depr_pop_base, depr_lookup, by = c("datazone", "year"))
 
+#### current problem here
 depr_pop_base <- rbind( 
   create_quintile_data(geo = "scotland", quint = "sc_quin"),   #Scotland 
   #Health boards using national quintiles
-  create_quintile_data(geo = "hb2019", quint = "sc_quin"),
+  create_quintile_data(geo = "hb", quint = "sc_quin"),
   #Health boards using health board quintiles
-  create_quintile_data(geo = "hb2019", quint = "hb_quin"),
+  create_quintile_data(geo = "hb", quint = "hb_quin"),
   #Council area using national quintiles
-  create_quintile_data(geo = "ca2019", quint = "sc_quin"),
+  create_quintile_data(geo = "ca", quint = "sc_quin"),
   #Council area using concil quintiles
-  create_quintile_data(geo = "ca2019", quint = "ca_quin"))
+  create_quintile_data(geo = "ca", quint = "ca_quin"))
 
 depr_totals <- depr_pop_base %>% group_by(year, sex_grp, age_grp, age, code, quint_type) %>% 
   summarise(denominator = sum(denominator, na.rm=T)) %>% ungroup() %>% 
